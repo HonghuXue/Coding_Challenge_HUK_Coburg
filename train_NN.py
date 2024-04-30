@@ -1,3 +1,10 @@
+# To add:
+# Evaluation matrix ()  D square
+# cross validation
+# importance sampling ratio
+# Tweedie loss (Done in training, but also in validation)
+
+
 import pandas as pd
 import arff
 import numpy as np
@@ -14,8 +21,7 @@ from sklearn.pipeline import Pipeline
 
 random_seed = 35
 torch.manual_seed(random_seed)
-np.random.seed(0)
-
+np.random.seed(random_seed)
 
 data_freq = arff.load('freMTPL2freq.arff')
 df_freq = pd.DataFrame(data_freq, columns=["IDpol", "ClaimNb", "Exposure", "Area", "VehPower", "VehAge","DrivAge", "BonusMalus", "VehBrand", "VehGas", "Density", "Region"])
@@ -25,9 +31,14 @@ del data_freq, data_sev
 # print(np.unique(df_sev["ClaimAmount"])) # The minimum of Claimamount is 1, whereas the maximum is 4e6.
 
 # Hyper-parameters
+merge_by_intersection = False
 input_standardization = True
 output_standardization = True
-batch_size = 1024
+include_sampling_weights = False
+tweedie_loss = True
+if tweedie_loss:
+    rho = 1.6
+batch_size = 4096
 num_epochs = 500
 
 # for early stopping criteria
@@ -35,11 +46,11 @@ best_val_loss = float('inf')  # Initialize best validation loss to a very high v
 epochs_no_improve = 0  # Counter for epochs without improvement
 n_epochs_stop = 30  # Number of epochs to stop after no improvement
 
-#  ----------------------------------------Second Task------------------------------------------
 # original length of df_sev["IDpol"] is 26639 . After groupby 24950.   After merge: 24944
 # After checking, dev_freq["CLaimNB"] is almost the same as same my defined statistics , except for one entry with the difference of 1 out of 24944 entries
 # df_sev["claimNB_sev"] = np.ones(df_sev["IDpol"].shape)
 # print("CHECK : {}".format(np.unique(merged_df["claimNB_sev"]-merged_df["ClaimNb"], return_counts=True)))
+
 
 
 # First sum up the "ClaimAmount" with duplicate entries of "IDpol".
@@ -47,8 +58,22 @@ n_epochs_stop = 30  # Number of epochs to stop after no improvement
 df_sev = df_sev.groupby("IDpol", as_index=False).agg({'ClaimAmount': 'sum'})
 
 # There are some nan features in df_freq with some "IDpol" in df_freq, which is directly cleaned,
-merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="inner")
+if merge_by_intersection:
+    merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="inner")
+else:
+    merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="outer")
+    merged_df["ClaimAmount"] = merged_df["ClaimAmount"].fillna(0)
+    merged_df = merged_df.dropna(how="any")
+    # n_samples / (n_classes * np.bincount(y)), where n_class = 2
+    # weights_minor_class = np.sum(merged_df["ClaimAmount"] == 0)/ np.sum(merged_df["ClaimAmount"] > 0)
+    weights_minor_class = len(merged_df["ClaimAmount"]) / (2 * np.sum(merged_df["ClaimAmount"] > 0))
+    weights_major_class = len(merged_df["ClaimAmount"]) / (2 * np.sum(merged_df["ClaimAmount"] == 0))
+    print("weights_for_class_imbalance", weights_minor_class, weights_major_class)
+
+# There are some nan features in df_freq with some "IDpol" in df_freq, which is directly cleaned,
 merged_df = merged_df.drop(['IDpol','ClaimNb'], axis = 1)
+
+# ------To Do: Feature value visulization-------
 
 # input_scalers_pred_claimamount = []
 # output_scalers_pred_claimamount = []
@@ -56,10 +81,11 @@ merged_df = merged_df.drop(['IDpol','ClaimNb'], axis = 1)
 # Split the data into training and test sets
 train_df, test_df = train_test_split(merged_df, test_size=0.2, random_state=random_seed)
 
+
 # Define the column transformer for handling different types of data
 preprocessor = ColumnTransformer(
     transformers=[
-        ('num', preprocessing.StandardScaler(), [col for col in train_df.columns if train_df[col].dtype in [np.float64, np.float32] and col not in ['ClaimAmount', 'Exposure', 'IDpol']]),
+        ('num', preprocessing.MinMaxScaler(), [col for col in train_df.columns if train_df[col].dtype in [np.float64, np.float32] and col not in ['ClaimAmount', 'Exposure', 'IDpol', 'ClaimNb']]),
         ('cat', preprocessing.OneHotEncoder(handle_unknown='ignore'), [col for col in train_df.columns if train_df[col].dtype == 'object']),
     ],
     remainder='passthrough'
@@ -67,7 +93,7 @@ preprocessor = ColumnTransformer(
 
 # Exclude 'ClaimAmount' and 'Exposure' from any transformation if output_standardization is applied
 if output_standardization:
-    output_scaler = preprocessing.MinMaxScaler()
+    output_scaler = preprocessing.MinMaxScaler(feature_range=(0, 1))
 claim_amount = train_df.pop('ClaimAmount') / train_df.pop('Exposure')  # Separate and transform this column separately
 
 # Create a processing pipeline
@@ -84,11 +110,13 @@ y_train = claim_amount
 X_test = pipeline.transform(test_df)
 y_test = test_df['ClaimAmount'] / test_df['Exposure']
 
+
 # If there's output standardization, fit and transform 'ClaimAmount' specifically
 if output_standardization:
     y_train = output_scaler.fit_transform(y_train.values.reshape(-1, 1))
     y_test = output_scaler.transform(test_df['ClaimAmount'].values.reshape(-1, 1) / test_df['Exposure'].values.reshape(-1, 1))
 
+y_train_min = y_train.min()
 # # Example to save scalers and encoder
 # input_scalers_pred_claimamount.append(('num', preprocessor.named_transformers_['num']))
 # input_scalers_pred_claimamount.append(('cat', preprocessor.named_transformers_['cat']))
@@ -100,14 +128,16 @@ feature_names = preprocessor.get_feature_names_out()
 print("New Feature Names:", feature_names)
 
 
-# Convert sparse Matrice representation of one-hot encoding to full representation
+# Convert sparse Matrix representation of one-hot encoding to full representation
 X_train, X_test = X_train.toarray(), X_test.toarray()
 print(X_train[0], X_train[0].shape)
 # print(X_train.max(axis=1), X_train.min(axis=1), X_train.std(axis=1) )
 # print(X_test.max(axis=1), X_test.min(axis=1), X_test.std(axis=1) )
 
+
+
 class CustomNetwork(nn.Module):
-    def __init__(self, layer_sizes=(4, 64, 128, 256, 1)):
+    def __init__(self, layer_sizes=(4, 128, 128, 128, 1)):
         super(CustomNetwork, self).__init__()
 
         # Ensure the layer_sizes is a tuple or list
@@ -125,19 +155,21 @@ class CustomNetwork(nn.Module):
             # Append BatchNorm layer except for the output layer
             if i < len(layer_sizes) - 2:
                 layers.append(nn.BatchNorm1d(layer_sizes[i + 1]))
-                layers.append(nn.PReLU())
-                layers.append(nn.Dropout(p=0.25))
-
+                # layers.append(nn.PReLU())
+                layers.append(nn.GELU())
+                layers.append(nn.Dropout(p=0.5))
 
         # Convert the list of layers into nn.Sequential
+        if tweedie_loss:
+            layers.append(nn.Softplus())
+
         self.layers = nn.Sequential(*layers)
 
     def forward(self, x):
         # Pass the input through the sequential layers
         x = self.layers(x)
+
         return x
-
-
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -156,7 +188,7 @@ y_train = torch.tensor(y_train, dtype=torch.float32, device=device)#.unsqueeze(1
 y_test = torch.tensor(y_test, dtype=torch.float32, device=device)#.unsqueeze(1)
 
 # Loss function and optimizer
-criterion = nn.L1Loss()
+criterion = nn.L1Loss(reduction = 'none')
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Define scheduler
@@ -184,8 +216,19 @@ for epoch in range(num_epochs):
         input = X_train[batch_train[i], :]
         target = y_train[batch_train[i]]
         predictions = model(input)
-        loss = criterion(predictions, target)
+        if tweedie_loss:
+            loss = -target * torch.pow(predictions, 1 - rho) / (1 - rho) + torch.pow(predictions, 2 - rho) / (2 - rho)
+            # print(torch.pow(predictions, 1 - rho) / (1 - rho))
+            # print(target, predictions, torch.pow(predictions, 1 - rho) , torch.pow(predictions, 2 - rho) )
+        else:
+            loss = criterion(predictions, target)
 
+        # Add weights to address class imbalance
+        if include_sampling_weights:
+            weights = torch.where(target == y_train_min, weights_major_class, weights_minor_class)  # Increase the weight for non-zero targets
+            loss = (loss * weights).mean()  # Weighted loss
+        else:
+            loss = loss.mean()
         loss.backward()
         optimizer.step()
         # statistics
@@ -193,7 +236,7 @@ for epoch in range(num_epochs):
 
     running_loss /= batch_train.size(0)
 
-    if output_standardization:
+    if output_standardization and not tweedie_loss:
         train_losses.append(running_loss * 1 / output_scaler.scale_)  # Record training loss
     else:
         train_losses.append(running_loss)  # Record training loss
@@ -204,15 +247,17 @@ for epoch in range(num_epochs):
     with torch.no_grad():
         val_predictions = model(X_test)
         val_loss = criterion(val_predictions, y_test)
-        if output_standardization:
+        # weights = torch.where(y_test == y_train_min, weights_major_class, weights_minor_class)  # Increase the weight for non-zero targets
+        # val_loss = (val_loss * weights).mean()
+        val_loss = val_loss.mean()
+    if output_standardization and not tweedie_loss:
             val_losses.append(val_loss.item() * 1 / output_scaler.scale_)
-        else:
-            val_losses.append(val_loss.item() )
+    else:
+        val_losses.append(val_loss.item() )
 
 
     current_lr = scheduler.get_last_lr()
-    print(
-      f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr[0]:.6f}')
+    print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr[0]:.6f}')
 
     # Check for early stopping
     if val_loss < best_val_loss:
@@ -243,14 +288,14 @@ plt.show()
 
 
 
-#---------------------------------------Visulize Feature Importance---------------------------------------
+#---------------------------------------Visualize Feature Importance---------------------------------------
 # Gradient-based Feature Importance (for Neural Networks)
 # For neural networks, gradients can be used as a measure of feature importance. This is similar to sensitivity analysis but involves taking the gradient of the output with respect to each input feature.
 #
 # This method and sensitivity analysis are particularly useful for deep learning models where internal weights and their relationship with features are often opaque and not linear.
 
 
-def gradient_based_feature_importance(model, input_data, feature_names):
+def gradient_based_feature_importance(model, input_data, feature_names, output_scaler):
     """
     Calculate gradient-based feature importance for a PyTorch model.
 
@@ -300,7 +345,7 @@ def gradient_based_feature_importance(model, input_data, feature_names):
             feature_groups[base_name].append(grad)
 
     # Calculating the mean gradient for each original feature
-    mean_gradients = {feature: np.mean(grads) for feature, grads in feature_groups.items()}
+    mean_gradients = {feature: np.mean(grads * 1 / output_scaler.scale_)  for feature, grads in feature_groups.items()}
 
     # Sorting for better visualization
     sorted_features = sorted(mean_gradients, key=mean_gradients.get, reverse=True)
@@ -316,4 +361,4 @@ def gradient_based_feature_importance(model, input_data, feature_names):
     return feature_importances
 
 # Compute the importance
-importance = gradient_based_feature_importance(model, X_train, feature_names)
+importance = gradient_based_feature_importance(model, X_train, feature_names, output_scaler)
