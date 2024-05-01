@@ -1,5 +1,6 @@
 
-# ----To add:  feature outlier -----
+# ----To add:  feature outlier / D square-----
+
 
 import seaborn as sns
 import pandas as pd
@@ -10,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split, KFold
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -38,17 +39,19 @@ merged_df = merged_df.dropna(how="any")
 merged_df = merged_df.drop(['IDpol'], axis = 1)
 
 
-
 # Hyper-parameters
 feature_visualization = False
+show_evaluation_plot = False
 input_standardization = True
 output_standardization = True
 include_sampling_weights = False
 tweedie_loss = True
+
+
 if tweedie_loss:
     rho = 1.8
 batch_size = 4096
-num_epochs = 500
+num_epochs = 5
 K_fold_splits = 5
 
 # for early stopping criteria
@@ -82,20 +85,21 @@ def plot_data_distribution(df):
 
 if feature_visualization:
     # # -------only visualize the target--------
-    # merged_df['ClaimAmount'] = merged_df['ClaimAmount'] / merged_df['Exposure']
-    # column = 'ClaimAmount'
-    # plt.figure(figsize=(10, 4))  # Set figure size
-    # sns.histplot(data=merged_df, x=column, kde=False, bins=50)  # KDE for smooth distribution curve
-    # plt.title(f'Histogram of {column}')
-    # plt.ylabel('Count')
-    # plt.xlabel(column)
-    # plt.yscale('log')
-    # plt.grid(True)
-    # plt.show()
+    target = merged_df['ClaimAmount'] / merged_df['Exposure']
+    plt.figure(figsize=(10, 4))  # Set figure size
+    sns.histplot(data=target, kde=False, bins=50)  # KDE for smooth distribution curve
+    plt.title(f'Histogram of expected claim amount')
+    plt.ylabel('Count')
+    plt.xlabel('Expected Claim Amount')
+    plt.yscale('log')
+    plt.grid(True)
+    plt.show()
+
+    # plot_data_distribution(merged_df)
     # # -------only visualize the target--------
 
     # ------Visualize all-------
-    plot_data_distribution(merged_df)
+    # plot_data_distribution(merged_df)
 #----------------visualize Features----------------------
 
 
@@ -152,11 +156,13 @@ print("New Feature Names:", feature_names)
 
 if include_sampling_weights:
     weights = torch.tensor(np.array(merged_df["Exposure"]), dtype=torch.float32, device=device)
-
+else:
+    weights = torch.tensor(np.ones(merged_df["Exposure"].shape), dtype=torch.float32, device=device)
 
 # Metrics for evaluation
 metrics = {
     'D_square': lambda y_true, y_pred: 1 - mean_squared_error(y_true, y_pred) / np.var(y_true),
+    'R_square': r2_score,
     'MAE': mean_absolute_error,
     'RMSE': lambda y_true, y_pred: np.sqrt(mean_squared_error(y_true, y_pred))
 }
@@ -199,8 +205,8 @@ for train_index, test_index in kf.split(merged_df):
 
     # ... include the training loop here ...
     # Lists to store losses for plotting
-    train_losses = []
-    val_losses = []
+    train_losses, train_losses_unscaled = [] , []
+    val_losses, val_losses_unscaled = [] , []
     best_val_loss = float('inf')
 
     for epoch in range(num_epochs):
@@ -210,7 +216,7 @@ for train_index, test_index in kf.split(merged_df):
         batch_train = batch_train[(batch_train.numel() % batch_size):]
         batch_train = batch_train.view(-1, batch_size)
 
-        running_loss = 0
+        running_loss, running_loss_unscaled = 0, 0
 
         # for each mini-batch
         for i in range(batch_train.size(0)):
@@ -221,8 +227,7 @@ for train_index, test_index in kf.split(merged_df):
             predictions = model(input)
             if tweedie_loss:
                 loss = -target * torch.pow(predictions, 1 - rho) / (1 - rho) + torch.pow(predictions, 2 - rho) / (2 - rho)
-                # print(torch.pow(predictions, 1 - rho) / (1 - rho))
-                # print(target, predictions, torch.pow(predictions, 1 - rho) , torch.pow(predictions, 2 - rho) )
+                loss_original_scale = -target.detach().cpu().numpy() * (1/output_scaler.scale_) * np.power(predictions.detach().cpu().numpy() * (1/output_scaler.scale_), 1 - rho) / (1 - rho) + np.power(predictions.detach().cpu().numpy() * (1/output_scaler.scale_), 2 - rho) / (2 - rho)
             else:
                 loss = criterion(predictions, target)
 
@@ -230,19 +235,24 @@ for train_index, test_index in kf.split(merged_df):
             if include_sampling_weights:
                 # weights = torch.where(target == y_train_min, weights_major_class, weights_minor_class)  # Increase the weight for non-zero targets
                 loss = (loss * weights[batch_train[i]].unsqueeze(-1)).mean()  # Weighted loss
+                loss_original_scale = (loss * weights[batch_train[i]].unsqueeze(-1).detach().cpu().numpy()).mean()
             else:
                 loss = loss.mean()
+                loss_original_scale = loss_original_scale.mean()
             loss.backward()
             optimizer.step()
             # statistics
             running_loss += loss.item()
+            running_loss_unscaled += loss_original_scale
 
         running_loss /= batch_train.size(0)
+        running_loss_unscaled /= batch_train.size(0)
 
         if output_standardization and not tweedie_loss:
             train_losses.append(running_loss * 1 / output_scaler.scale_)  # Record training loss
         else:
             train_losses.append(running_loss)  # Record training loss
+            train_losses_unscaled.append(np.squeeze(running_loss_unscaled))
         scheduler.step()  # Update learning rate
 
 
@@ -254,16 +264,21 @@ for train_index, test_index in kf.split(merged_df):
                 val_loss = criterion(val_predictions, y_test)
             elif validation_criterion == 'TweedieLoss':
                 val_loss = -y_test * torch.pow(val_predictions, 1 - rho) / (1 - rho) + torch.pow(val_predictions, 2 - rho) / (2 - rho)
+                val_loss_original_scale = -target.detach().cpu().numpy() * (1 / output_scaler.scale_) * np.power(
+                    predictions.detach().cpu().numpy() * (1 / output_scaler.scale_), 1 - rho) / (1 - rho) + np.power(
+                    predictions.detach().cpu().numpy() * (1 / output_scaler.scale_), 2 - rho) / (2 - rho)
 
             if include_sampling_weights:
                 val_loss = val_loss * weights[test_index].unsqueeze(-1)
+                val_loss_original_scale = val_loss_original_scale * weights[test_index].unsqueeze(-1).detach().cpu().numpy()
             val_loss = val_loss.mean()
+            val_loss_original_scale = val_loss_original_scale.mean()
 
         if output_standardization and not tweedie_loss:
             val_losses.append(val_loss.item() * 1 / output_scaler.scale_)
         else:
             val_losses.append(val_loss.item())
-
+            val_losses_unscaled.append(val_loss_original_scale)
         current_lr = scheduler.get_last_lr()
         print(
             f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr[0]:.6f}')
@@ -280,7 +295,7 @@ for train_index, test_index in kf.split(merged_df):
         val_predictions = val_predictions.cpu().numpy()
         y_test_np = y_test.detach().cpu().numpy()
         for name, metric_fn in metrics.items():
-            results[name][k_fold_iter][epoch] = metric_fn(y_test_np, val_predictions)
+            results[name][k_fold_iter][epoch] = metric_fn(y_test_np * 1/output_scaler.scale_, val_predictions * 1/output_scaler.scale_)
 
         if epochs_no_improve == n_epochs_stop:
             print('Early stopping triggered')
@@ -288,18 +303,19 @@ for train_index, test_index in kf.split(merged_df):
             del model_backup
             break
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(train_losses, label='Training Loss')
-    plt.plot(val_losses, label='Validation Loss ' + validation_criterion)
-    for name, metric_fn in metrics.items():
-        plt.plot(results[name][k_fold_iter], label='Validation Loss ' + name)
-    plt.title('Training and Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.yscale('log')
-    plt.show()
+    if show_evaluation_plot:
+        plt.figure(figsize=(10, 6))
+        plt.plot(train_losses_unscaled, label='Training Loss')
+        plt.plot(val_losses_unscaled, label='Validation Loss ' + validation_criterion)
+        for name, metric_fn in metrics.items():
+            plt.plot(results[name][k_fold_iter], label='Validation Loss ' + name)
+        plt.title('Training and Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.yscale('log')
+        plt.show()
 
     k_fold_iter += 1
     print('K_fold_iter', k_fold_iter)
@@ -317,7 +333,7 @@ for train_index, test_index in kf.split(merged_df):
 # This method and sensitivity analysis are particularly useful for deep learning models where internal weights and their relationship with features are often opaque and not linear.
 
 
-def gradient_based_feature_importance(model, input_data, feature_names, output_scaler):
+def gradient_based_feature_importance(model, input_data, weights, feature_names, output_scaler):
     """
     Calculate gradient-based feature importance for a PyTorch model.
 
@@ -341,7 +357,7 @@ def gradient_based_feature_importance(model, input_data, feature_names, output_s
     outputs.backward(torch.ones_like(outputs))
 
     # Extract the gradients of the output with respect to inputs
-    gradients = input_data.grad.abs().mean(dim=0)
+    gradients = (input_data.grad.abs() * weights.unsqueeze(-1)).mean(dim=0)
 
     # Detach gradients and convert to numpy for further analysis/plotting
     feature_importances = gradients.detach().cpu().numpy()
@@ -378,4 +394,4 @@ def gradient_based_feature_importance(model, input_data, feature_names, output_s
     return feature_importances
 
 # Compute the importance
-importance = gradient_based_feature_importance(model, X_train, feature_names, output_scaler)
+importance = gradient_based_feature_importance(model, X_train, weights[train_index], feature_names, output_scaler)

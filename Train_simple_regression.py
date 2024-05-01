@@ -1,55 +1,42 @@
 import pandas as pd
 import arff
 import numpy as np
-from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LinearRegression, TweedieRegressor
-from sklearn import linear_model
 import optuna
 from sklearn.model_selection import cross_val_score, KFold
 from sklearn.metrics import mean_squared_error, make_scorer, mean_absolute_error
 import seaborn as sns
 
 
-random_seed = 35
-np.random.seed(random_seed)
-feature_visualization = True
-
-
 data_freq = arff.load('freMTPL2freq.arff')
-df_freq = pd.DataFrame(data_freq, columns=["IDpol", "ClaimNb", "Exposure", "Area", "VehPower", "VehAge","DrivAge", "BonusMalus", "VehBrand", "VehGas", "Density", "Region"])
+df_freq = pd.DataFrame(data_freq, columns=["IDpol", "ClaimNb", "Exposure", "Area", "VehPower", "VehAge", "DrivAge", "BonusMalus", "VehBrand", "VehGas", "Density", "Region"])
 data_sev = arff.load('freMTPL2sev.arff')
 df_sev = pd.DataFrame(data_sev, columns=["IDpol", "ClaimAmount"])
 del data_freq, data_sev
 # print(np.unique(df_sev["ClaimAmount"])) # The minimum of Claimamount is 1, whereas the maximum is 4e6.
-print(np.unique(df_freq["BonusMalus"], return_counts= True))
+# print(np.unique(df_freq["BonusMalus"], return_counts= True))
 
 
 # Hyper-parameters
+random_seed = 35
+np.random.seed(random_seed)
 input_standardization = True
 output_standardization = False
-merge_by_intersection = False
-
+feature_visualization = True
 # First sum up the "ClaimAmount" with duplicate entries of "IDpol".
 # df_sev = df_sev.groupby("IDpol").sum()
 df_sev = df_sev.groupby("IDpol", as_index=False).agg({'ClaimAmount': 'sum'})
 
+
 # There are some nan features in df_freq with some "IDpol" in df_freq, which is directly cleaned,
-if merge_by_intersection:
-    merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="inner")
-else:
-    merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="outer")
-    merged_df["ClaimAmount"] = merged_df["ClaimAmount"].fillna(0)
-    merged_df = merged_df.dropna(how="any")
-
-
+merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="outer")
+merged_df["ClaimAmount"] = merged_df["ClaimAmount"].fillna(0)
+merged_df = merged_df.dropna(how="any")
 merged_df = merged_df.drop(['IDpol','ClaimNb'], axis = 1)
-
-# input_scalers_pred_claimamount = []
-# output_scalers_pred_claimamount = []
 
 #----------------visualize Features----------------------
 categorical_columns = ['Area', 'VehBrand', 'VehGas', 'Region']
@@ -77,13 +64,12 @@ def plot_data_distribution(df):
 
 
 if feature_visualization:
-    merged_df['ClaimAmount'] = merged_df['ClaimAmount'] / merged_df['Exposure']
-    column = 'ClaimAmount'
+    target = merged_df['ClaimAmount'] / merged_df['Exposure']
     plt.figure(figsize=(10, 4))  # Set figure size
-    sns.histplot(data=merged_df, x=column, kde=False, bins=50)  # KDE for smooth distribution curve
-    plt.title(f'Histogram of {column}')
+    sns.histplot(data=target, kde=False, bins=50)  # KDE for smooth distribution curve
+    plt.title(f'Histogram of expected claim amount')
     plt.ylabel('Count')
-    plt.xlabel(column)
+    plt.xlabel('Expected Claim Amount')
     plt.yscale('log')
     plt.grid(True)
     plt.show()
@@ -92,22 +78,20 @@ if feature_visualization:
 #----------------visualize Features----------------------
 
 
-
-
 # Define the column transformer for handling different types of data
 preprocessor = ColumnTransformer(
     transformers=[
-        ('num', preprocessing.MinMaxScaler(), [col for col in merged_df.columns if merged_df[col].dtype in [np.float64, np.float32] and col not in ['ClaimAmount', 'Exposure', 'IDpol']]),
+        ('num', preprocessing.MinMaxScaler(), [col for col in merged_df.columns if merged_df[col].dtype in [np.float64, np.float32] and col not in ['ClaimAmount', 'Exposure', 'IDpol', 'ClaimNb']]),
         ('cat', preprocessing.OneHotEncoder(handle_unknown='ignore'), [col for col in merged_df.columns if merged_df[col].dtype == 'object']),
     ],
-    remainder='passthrough'
+    remainder='drop'
 )
 
 # Exclude 'ClaimAmount' and 'Exposure' from any transformation if output_standardization is applied
 if output_standardization:
     output_scaler = preprocessing.MinMaxScaler()
-claim_amount = merged_df.pop('ClaimAmount') #/ merged_df.pop('Exposure')  # Separate and transform this column separately
-print(np.min(claim_amount))
+claim_amount = merged_df.pop('ClaimAmount') / merged_df.pop('Exposure')  # Separate and transform this column separately
+
 # Create a processing pipeline
 pipeline = Pipeline(steps=[
     ('preprocessor', preprocessor),
@@ -124,49 +108,24 @@ if output_standardization:
     y = output_scaler.fit_transform(y.values.reshape(-1, 1))
 
 
-# Get feature names from the column transformer
-feature_names = preprocessor.get_feature_names_out()
-# print("New Feature Names:", feature_names)
-
-
 # Convert sparse Matrice representation of one-hot encoding to full representation
 X = X.toarray()
 print(X[0], X[0].shape)
 
 
-
-
-#Evaluation
-# from sklearn.metrics import mean_absolute_error
-# from sklearn.metrics import mean_squared_error
-# print("Mean Square Error", mean_squared_error(y_pred,y_test))
-# print('RMSE',np.sqrt(mean_squared_error(y_pred,y_test)))
-# print("Mean Abosulute Error", mean_absolute_error(y_pred,y_test))
-
-
-
 def objective(trial, X, y):
-
     # Suggest values for the hyperparameters
-    power_category = trial.suggest_categorical('power_category', ['0', '1-2', '2', '3'])
-    if power_category == '1-2':
-        power = trial.suggest_float('power_continuous', 1, 2)
-    else:
-        power = float(power_category)
-
+    power = trial.suggest_float('power', 1, 2)
     alpha = trial.suggest_float('alpha', 1e-3, 10.0, log=True)  # Regularization strength
     solver = trial.suggest_categorical('solver', ['lbfgs', 'newton-cholesky'])
     # Create a model with suggested hyperparameters
     model = TweedieRegressor(power=power, alpha=alpha, solver=solver, max_iter= 300)
-
     # Perform 5-fold cross-validation
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf = KFold(n_splits=5, shuffle=True, random_state=random_seed)
     scores = cross_val_score(model, X, y, cv=kf, scoring=make_scorer(mean_squared_error))
     # Compute RMSE from scores
     rmse = (scores.mean()) ** 0.5
-
     return rmse
-
 
 def objective_wrapper(trial):
     return objective(trial, X, y)
@@ -174,24 +133,46 @@ def objective_wrapper(trial):
 
 # Create a study object and optimize the objective function
 study = optuna.create_study(direction='minimize')
-study.optimize(objective_wrapper, n_trials=2)
+study.optimize(objective_wrapper, n_trials=1)
 
 # Best trial result
 print(f"Best trial: {study.best_trial.value}")
 print(f"Best parameters: {study.best_trial.params}")
 best_params = study.best_params.copy()
 
-if 'power_continuous' in best_params:
-    best_params.pop("power_category")
-    best_params["power"] = best_params["power_continuous"]
-    best_params.pop("power_continuous")
-else:
-    best_params["power"] = int(best_params["power_category"])
-    best_params.pop("power_category")
-
 model = TweedieRegressor(**best_params)
 model.fit(X,y)
-print(model.coef_)
 
 
 #--------------To Do: Visulize the feature weights-------------------
+# Get feature names from the column transformer
+feature_names = preprocessor.get_feature_names_out()
+# print("New Feature Names:", feature_names)
+
+# Plot feature importance
+plt.figure()
+# plt.bar(range(len(feature_importances)), feature_importances, alpha=0.7)
+
+# Step to categorize and average gradients
+feature_groups = {}
+for name, weight in zip(feature_names, model.coef_):
+    # Parse the feature name to find the base feature (before one-hot encoding)
+    if '__' in name:
+        base_name = name.split('__')[1].split('_')[0]
+        if base_name not in feature_groups:
+            feature_groups[base_name] = []
+        feature_groups[base_name].append(abs(weight))
+
+# Calculating the mean gradient for each original feature
+mean_weights = {feature: np.mean(weight)  for feature, weight in feature_groups.items()}
+
+# Sorting for better visualization
+sorted_features = sorted(mean_weights, key=mean_weights.get, reverse=True)
+sorted_importances = [mean_weights[feature] for feature in sorted_features]
+
+
+plt.barh(sorted_features, sorted_importances, color='skyblue')
+plt.ylabel('Feature Index')
+plt.xlabel('Importance')
+plt.title('Feature Importance from Tweedie Regression')
+plt.show()
