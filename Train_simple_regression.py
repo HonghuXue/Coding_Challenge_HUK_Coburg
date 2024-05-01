@@ -20,23 +20,24 @@ del data_freq, data_sev
 # print(np.unique(df_sev["ClaimAmount"])) # The minimum of Claimamount is 1, whereas the maximum is 4e6.
 # print(np.unique(df_freq["BonusMalus"], return_counts= True))
 
-
-# Hyper-parameters
-random_seed = 35
-np.random.seed(random_seed)
-input_standardization = True
-output_standardization = False
-feature_visualization = True
 # First sum up the "ClaimAmount" with duplicate entries of "IDpol".
 # df_sev = df_sev.groupby("IDpol").sum()
-df_sev = df_sev.groupby("IDpol", as_index=False).agg({'ClaimAmount': 'sum'})
 
+df_sev = df_sev.groupby("IDpol", as_index=False).agg({'ClaimAmount': 'sum'})
 
 # There are some nan features in df_freq with some "IDpol" in df_freq, which is directly cleaned,
 merged_df = pd.merge(df_freq, df_sev, on="IDpol", how="outer")
 merged_df["ClaimAmount"] = merged_df["ClaimAmount"].fillna(0)
 merged_df = merged_df.dropna(how="any")
 merged_df = merged_df.drop(['IDpol','ClaimNb'], axis = 1)
+
+# Hyper-parameters
+random_seed = 35
+np.random.seed(random_seed)
+input_standardization = True
+output_standardization = False
+feature_visualization = False
+
 
 #----------------visualize Features----------------------
 categorical_columns = ['Area', 'VehBrand', 'VehGas', 'Region']
@@ -102,16 +103,13 @@ pipeline = Pipeline(steps=[
 X = pipeline.fit_transform(merged_df)
 y = claim_amount
 
-
 # If there's output standardization, fit and transform 'ClaimAmount' specifically
 if output_standardization:
     y = output_scaler.fit_transform(y.values.reshape(-1, 1))
 
-
 # Convert sparse Matrice representation of one-hot encoding to full representation
 X = X.toarray()
 print(X[0], X[0].shape)
-
 
 def objective(trial, X, y):
     # Suggest values for the hyperparameters
@@ -119,21 +117,22 @@ def objective(trial, X, y):
     alpha = trial.suggest_float('alpha', 1e-3, 10.0, log=True)  # Regularization strength
     solver = trial.suggest_categorical('solver', ['lbfgs', 'newton-cholesky'])
     # Create a model with suggested hyperparameters
-    model = TweedieRegressor(power=power, alpha=alpha, solver=solver, max_iter= 300)
+    model = TweedieRegressor(power=power, alpha=alpha, solver=solver, max_iter= 500)
     # Perform 5-fold cross-validation
     kf = KFold(n_splits=5, shuffle=True, random_state=random_seed)
-    scores = cross_val_score(model, X, y, cv=kf, scoring=make_scorer(mean_squared_error))
+    scores = cross_val_score(model, X, y, cv=kf, scoring=make_scorer(mean_absolute_error))
     # Compute RMSE from scores
-    rmse = (scores.mean()) ** 0.5
-    return rmse
+    # rmse = (scores.mean()) ** 0.5
+    abs_error = scores.mean()
+
+    return abs_error
 
 def objective_wrapper(trial):
     return objective(trial, X, y)
 
-
 # Create a study object and optimize the objective function
 study = optuna.create_study(direction='minimize')
-study.optimize(objective_wrapper, n_trials=1)
+study.optimize(objective_wrapper, n_trials=10)
 
 # Best trial result
 print(f"Best trial: {study.best_trial.value}")
@@ -144,7 +143,7 @@ model = TweedieRegressor(**best_params)
 model.fit(X,y)
 
 
-#--------------To Do: Visulize the feature weights-------------------
+#--------------To Do: Visualize the feature weights-------------------
 # Get feature names from the column transformer
 feature_names = preprocessor.get_feature_names_out()
 # print("New Feature Names:", feature_names)
