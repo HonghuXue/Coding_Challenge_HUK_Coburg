@@ -1,5 +1,6 @@
-This is Coding Challenge to estimate the .
-I basically provide
+#  Coding Challenge Solution
+Author : Honghu Xue
+I basically provide 2 potential solutions to this challenge:
 (1) Tweedie Regression
 (2) Neural Network with Tweedie Loss
 as potential solutions
