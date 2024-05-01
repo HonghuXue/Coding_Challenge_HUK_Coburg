@@ -1,7 +1,5 @@
 
 # ----To add:  feature outlier / D square-----
-
-
 import seaborn as sns
 import pandas as pd
 import arff
@@ -40,18 +38,17 @@ merged_df = merged_df.drop(['IDpol'], axis = 1)
 
 
 # Hyper-parameters
-feature_visualization = False
+feature_visualization = True
 show_evaluation_plot = False
 input_standardization = True
 output_standardization = True
 include_sampling_weights = False
 tweedie_loss = True
 
-
 if tweedie_loss:
     rho = 1.8
 batch_size = 4096
-num_epochs = 5
+num_epochs = 500
 K_fold_splits = 5
 
 # for early stopping criteria
@@ -74,8 +71,12 @@ def plot_data_distribution(df):
             plt.xticks(rotation=45)  # Rotate x labels for better visibility if needed
         else:
             # Histogram for numerical data
-            sns.histplot(data=df, x=column, kde=False, bins=30)  # KDE for smooth distribution curve
-            plt.title(f'Histogram of {column}')
+            if column != "ClaimAmount":
+                sns.histplot(data=df, x=column, kde=False, bins=30)  # KDE for smooth distribution curve
+                plt.title(f'Histogram of {column}')
+            elif column == "ClaimAmount":
+                sns.histplot(data=df[column]/df['Exposure'], kde=False, bins=30)
+                plt.title(f'Histogram of expected {column} per year')
 
         plt.ylabel('Count')
         plt.xlabel(column)
@@ -84,23 +85,9 @@ def plot_data_distribution(df):
 
 
 if feature_visualization:
-    # # -------only visualize the target--------
-    target = merged_df['ClaimAmount'] / merged_df['Exposure']
-    plt.figure(figsize=(10, 4))  # Set figure size
-    sns.histplot(data=target, kde=False, bins=50)  # KDE for smooth distribution curve
-    plt.title(f'Histogram of expected claim amount')
-    plt.ylabel('Count')
-    plt.xlabel('Expected Claim Amount')
-    plt.yscale('log')
-    plt.grid(True)
-    plt.show()
-
-    # plot_data_distribution(merged_df)
-    # # -------only visualize the target--------
-
-    # ------Visualize all-------
-    # plot_data_distribution(merged_df)
+    plot_data_distribution(merged_df)
 #----------------visualize Features----------------------
+
 
 
 class CustomNetwork(nn.Module):
@@ -138,11 +125,18 @@ class CustomNetwork(nn.Module):
         return x
 
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 # Prepare data for cross-validation
 kf = KFold(n_splits=K_fold_splits, shuffle=True, random_state=random_seed)
+# Metrics for evaluation
+metrics = {
+    'D_square': lambda y_true, y_pred: 1 - mean_squared_error(y_true, y_pred) / np.var(y_true),
+    'R_square': r2_score,
+    'MAE': mean_absolute_error,
+    'RMSE': lambda y_true, y_pred: np.sqrt(mean_squared_error(y_true, y_pred))
+}
+
+# Feature encoding
 feature_transformer = ColumnTransformer(transformers=[
     ('num', MinMaxScaler(), [col for col in merged_df.columns if
                              merged_df[col].dtype in [np.float64, np.float32] and col not in ['ClaimAmount', 'Exposure', 'IDpol', 'ClaimNb']]),
@@ -154,26 +148,39 @@ feature_transformer.fit_transform(merged_df.drop(['ClaimAmount', 'Exposure', 'Cl
 feature_names = feature_transformer.get_feature_names_out()
 print("New Feature Names:", feature_names)
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 if include_sampling_weights:
     weights = torch.tensor(np.array(merged_df["Exposure"]), dtype=torch.float32, device=device)
 else:
     weights = torch.tensor(np.ones(merged_df["Exposure"].shape), dtype=torch.float32, device=device)
 
-# Metrics for evaluation
-metrics = {
-    'D_square': lambda y_true, y_pred: 1 - mean_squared_error(y_true, y_pred) / np.var(y_true),
-    'R_square': r2_score,
-    'MAE': mean_absolute_error,
-    'RMSE': lambda y_true, y_pred: np.sqrt(mean_squared_error(y_true, y_pred))
-}
+
+# -----outlier detection-----
+# merged_df['ClaimRatio'] = merged_df['ClaimAmount'] / merged_df['Exposure']
+# Q1 = merged_df['ClaimRatio'].quantile(0.25)
+# Q3 = merged_df['ClaimRatio'].quantile(0.75)
+# IQR = Q3 - Q1
+# print(Q3, Q1)
+# # Define the upper and lower bounds for outliers
+# lower_bound = Q1 - 1.5 * IQR
+# upper_bound = Q3 + 1.5 * IQR
+#
+# # Cap values exceeding the upper bound
+# merged_df['CappedClaimRatio'] = merged_df['ClaimRatio'].apply(lambda x: min(x, upper_bound))
+#
+# # Display some statistics or the head of the dataframe to verify
+# print(merged_df[['ClaimRatio', 'CappedClaimRatio']].describe())
+# merged_df.drop('ClaimRatio', axis=1, inplace=True)
+
 
 # Main loop for cross-validation
 results = {key: np.empty((K_fold_splits, num_epochs)) * np.nan for key in metrics.keys()}
+
 k_fold_iter = 0
 for train_index, test_index in kf.split(merged_df):
     train_df, test_df = merged_df.iloc[train_index], merged_df.iloc[test_index]
-    X_train, y_train = feature_transformer.fit_transform(train_df.drop(['ClaimAmount', 'Exposure', 'ClaimNb'], axis=1)), train_df['ClaimAmount'] / train_df['Exposure']
-    X_test, y_test = feature_transformer.transform(test_df.drop(['ClaimAmount', 'Exposure'], axis=1)), test_df['ClaimAmount'] / test_df['Exposure']
+    X_train, y_train = feature_transformer.fit_transform(train_df.drop(['ClaimAmount', 'Exposure', 'ClaimNb'], axis=1)), train_df['ClaimAmount']/train_df['Exposure']
+    X_test, y_test = feature_transformer.transform(test_df.drop(['ClaimAmount', 'Exposure'], axis=1)), test_df['ClaimAmount']/test_df['Exposure']
 
     if output_standardization:
         output_scaler = MinMaxScaler(feature_range=(0, 1))
