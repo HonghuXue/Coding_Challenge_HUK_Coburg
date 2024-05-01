@@ -38,11 +38,11 @@ merged_df = merged_df.drop(['IDpol'], axis = 1)
 
 
 # Hyper-parameters
-feature_visualization = True
-show_evaluation_plot = False
+feature_visualization = False
+show_evaluation_plot = True
 input_standardization = True
 output_standardization = True
-include_sampling_weights = False
+include_sampling_weights = True
 tweedie_loss = True
 
 if tweedie_loss:
@@ -227,7 +227,7 @@ for train_index, test_index in kf.split(merged_df):
 
         # for each mini-batch
         for i in range(batch_train.size(0)):
-            # mini-batch
+
             optimizer.zero_grad()
             input = X_train[batch_train[i], :]
             target = y_train[batch_train[i]]
@@ -242,7 +242,7 @@ for train_index, test_index in kf.split(merged_df):
             if include_sampling_weights:
                 # weights = torch.where(target == y_train_min, weights_major_class, weights_minor_class)  # Increase the weight for non-zero targets
                 loss = (loss * weights[batch_train[i]].unsqueeze(-1)).mean()  # Weighted loss
-                loss_original_scale = (loss * weights[batch_train[i]].unsqueeze(-1).detach().cpu().numpy()).mean()
+                loss_original_scale = (loss_original_scale * weights[batch_train[i]].unsqueeze(-1).detach().cpu().numpy()).mean()
             else:
                 loss = loss.mean()
                 loss_original_scale = loss_original_scale.mean()
@@ -271,9 +271,9 @@ for train_index, test_index in kf.split(merged_df):
                 val_loss = criterion(val_predictions, y_test)
             elif validation_criterion == 'TweedieLoss':
                 val_loss = -y_test * torch.pow(val_predictions, 1 - rho) / (1 - rho) + torch.pow(val_predictions, 2 - rho) / (2 - rho)
-                val_loss_original_scale = -target.detach().cpu().numpy() * (1 / output_scaler.scale_) * np.power(
-                    predictions.detach().cpu().numpy() * (1 / output_scaler.scale_), 1 - rho) / (1 - rho) + np.power(
-                    predictions.detach().cpu().numpy() * (1 / output_scaler.scale_), 2 - rho) / (2 - rho)
+                val_loss_original_scale = -y_test.detach().cpu().numpy() * (1 / output_scaler.scale_) * np.power(
+                    val_predictions.detach().cpu().numpy() * (1 / output_scaler.scale_), 1 - rho) / (1 - rho) + np.power(
+                    val_predictions.detach().cpu().numpy() * (1 / output_scaler.scale_), 2 - rho) / (2 - rho)
 
             if include_sampling_weights:
                 val_loss = val_loss * weights[test_index].unsqueeze(-1)
@@ -287,8 +287,7 @@ for train_index, test_index in kf.split(merged_df):
             val_losses.append(val_loss.item())
             val_losses_unscaled.append(val_loss_original_scale)
         current_lr = scheduler.get_last_lr()
-        print(
-            f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr[0]:.6f}')
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr[0]:.6f}')
 
         # Check for early stopping
         if val_loss < best_val_loss:
