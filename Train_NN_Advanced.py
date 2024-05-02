@@ -302,7 +302,7 @@ for train_index, test_index in kf.split(merged_df):
         y_test_np = y_test.detach().cpu().numpy()
         for name, metric_fn in metrics.items():
             results[name][k_fold_iter][epoch] = metric_fn(y_test_np * 1/output_scaler.scale_, val_predictions * 1/output_scaler.scale_)
-
+            print(name, results[name][k_fold_iter][epoch])
         if epochs_no_improve == n_epochs_stop:
             print('Early stopping triggered')
             model.load_state_dict(model_backup.state_dict())

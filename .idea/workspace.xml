@@ -21,6 +21,9 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
     <option name="SET_USER_NAME_GLOBALLY" value="false" />
   </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -116,7 +119,31 @@
       <option name="project" value="LOCAL" />
       <updated>1714592139536</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="Fix bugs of feature weights + Upload .ipynb">
+      <option name="closed" value="true" />
+      <created>1714600816046</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1714600816046</updated>
+    </task>
+    <task id="LOCAL-00008" summary="Fix bugs of feature weights + Upload .ipynb">
+      <option name="closed" value="true" />
+      <created>1714600859277</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1714600859277</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Fix bugs of feature weights + Upload .ipynb">
+      <option name="closed" value="true" />
+      <created>1714600863203</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1714600863203</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
