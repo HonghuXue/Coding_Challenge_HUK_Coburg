@@ -1,9 +1,8 @@
 #  Coding Challenge Solution
-Author : Honghu Xue
-I basically provide 2 potential solutions to this challenge:
-(1) Tweedie Regression
-(2) Neural Network with Tweedie Loss
-as potential solutions
+Autor: Honghu Xue
+Ich biete grundsätzlich 2 mögliche Lösungen für diese Herausforderung an:
+(1) Tweedie Regression (Coding_Challenge_TrainingTweedie_Regression.ipynb)
+(2) Neural Network with Tweedie Loss (Coding_Challenge_Training_NN.ipynb)
 
-For details, please refer to the .ipynb file repsectively.
 
+Einzelheiten entnehmen Sie bitte der jeweiligen .ipynb-Datei.
