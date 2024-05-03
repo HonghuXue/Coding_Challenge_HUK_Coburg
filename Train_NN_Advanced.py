@@ -42,17 +42,21 @@ feature_visualization = False
 show_evaluation_plot = True
 input_standardization = True
 output_standardization = True
-include_sampling_weights = False
-tweedie_loss = True
-
-if tweedie_loss:
+include_sampling_weights = True
+tweedie_loss_train = True
+tweedie_loss_val = False
+if tweedie_loss_val:
+    validation_criterion = 'TweedieLoss'  # 'MSELoss' 'TweedieLoss'
+else:
+    validation_criterion = 'L1Loss'  # 'MSELoss' 'TweedieLoss'
+if tweedie_loss_train or tweedie_loss_val:
     rho = 1.8
 batch_size = 4096
 num_epochs = 500
 K_fold_splits = 5
 
 # for early stopping criteria
-validation_criterion = 'TweedieLoss' # 'MSELoss' 'TweedieLoss'
+
 epochs_no_improve = 0  # Counter for epochs without improvement
 n_epochs_stop = 30  # Number of epochs to stop after no improvement
 
@@ -91,7 +95,7 @@ if feature_visualization:
 
 
 class CustomNetwork(nn.Module):
-    def __init__(self, layer_sizes=(4, 128, 128, 128, 1)):
+    def __init__(self, layer_sizes=(46, 128, 128, 128, 1)):
         super(CustomNetwork, self).__init__()
 
         # Ensure the layer_sizes is a tuple or list
@@ -114,7 +118,7 @@ class CustomNetwork(nn.Module):
                 layers.append(nn.Dropout(p=0.5))
 
         # Convert the list of layers into nn.Sequential
-        if tweedie_loss:
+        if tweedie_loss_train or tweedie_loss_val:
             layers.append(nn.Softplus())
 
         self.layers = nn.Sequential(*layers)
@@ -232,7 +236,7 @@ for train_index, test_index in kf.split(merged_df):
             input = X_train[batch_train[i], :]
             target = y_train[batch_train[i]]
             predictions = model(input)
-            if tweedie_loss:
+            if tweedie_loss_train:
                 loss = -target * torch.pow(predictions, 1 - rho) / (1 - rho) + torch.pow(predictions, 2 - rho) / (2 - rho)
                 loss_original_scale = -target.detach().cpu().numpy() * (1/output_scaler.scale_) * np.power(predictions.detach().cpu().numpy() * (1/output_scaler.scale_), 1 - rho) / (1 - rho) + np.power(predictions.detach().cpu().numpy() * (1/output_scaler.scale_), 2 - rho) / (2 - rho)
             else:
@@ -255,7 +259,7 @@ for train_index, test_index in kf.split(merged_df):
         running_loss /= batch_train.size(0)
         running_loss_unscaled /= batch_train.size(0)
 
-        if output_standardization and not tweedie_loss:
+        if output_standardization and not tweedie_loss_train:
             train_losses.append(running_loss * 1 / output_scaler.scale_)  # Record training loss
         else:
             train_losses.append(running_loss)  # Record training loss
@@ -277,11 +281,13 @@ for train_index, test_index in kf.split(merged_df):
 
             if include_sampling_weights:
                 val_loss = val_loss * weights[test_index].unsqueeze(-1)
-                val_loss_original_scale = val_loss_original_scale * weights[test_index].unsqueeze(-1).detach().cpu().numpy()
+                if validation_criterion == 'TweedieLoss':
+                    val_loss_original_scale = val_loss_original_scale * weights[test_index].unsqueeze(-1).detach().cpu().numpy()
             val_loss = val_loss.mean()
-            val_loss_original_scale = val_loss_original_scale.mean()
+            if validation_criterion == 'TweedieLoss':
+                val_loss_original_scale = val_loss_original_scale.mean()
 
-        if output_standardization and not tweedie_loss:
+        if output_standardization and not tweedie_loss_val:
             val_losses.append(val_loss.item() * 1 / output_scaler.scale_)
         else:
             val_losses.append(val_loss.item())
@@ -312,7 +318,7 @@ for train_index, test_index in kf.split(merged_df):
     if show_evaluation_plot:
         plt.figure(figsize=(10, 6))
         plt.plot(train_losses_unscaled, label='Training Loss')
-        plt.plot(val_losses_unscaled, label='Validation Loss ' + validation_criterion)
+        plt.plot(val_losses, label='Validation Loss ' + validation_criterion)
         for name, metric_fn in metrics.items():
             plt.plot(results[name][k_fold_iter], label='Validation Loss ' + name)
         plt.title('Training and Validation Loss')

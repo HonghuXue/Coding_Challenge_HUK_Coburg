@@ -8,7 +8,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LinearRegression, TweedieRegressor
 import optuna
 from sklearn.model_selection import cross_val_score, KFold
-from sklearn.metrics import mean_squared_error, make_scorer, mean_absolute_error
+from sklearn.metrics import mean_squared_error, make_scorer, mean_absolute_error, root_mean_squared_error, d2_tweedie_score
 import seaborn as sns
 
 
@@ -120,12 +120,12 @@ def objective(trial, X, y):
     model = TweedieRegressor(power=power, alpha=alpha, solver=solver, max_iter= 500)
     # Perform 5-fold cross-validation
     kf = KFold(n_splits=5, shuffle=True, random_state=random_seed)
-    scores = cross_val_score(model, X, y, cv=kf, scoring=make_scorer(mean_absolute_error))
+    scores = cross_val_score(model, X, y, cv=kf, scoring=make_scorer(root_mean_squared_error))
     # Compute RMSE from scores
-    # rmse = (scores.mean()) ** 0.5
-    abs_error = scores.mean()
+    rmse = scores.mean()# ** 0.5
+    # abs_error = scores.mean()
 
-    return abs_error
+    return rmse
 
 def objective_wrapper(trial):
     return objective(trial, X, y)

@@ -4,7 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="63252bd8-ee09-44df-86b1-ac65539b06b4" name="Changes" comment="" />
+    <list default="true" id="63252bd8-ee09-44df-86b1-ac65539b06b4" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Train_NN_Advanced.py" beforeDir="false" afterPath="$PROJECT_DIR$/Train_NN_Advanced.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Train_simple_regression.py" beforeDir="false" afterPath="$PROJECT_DIR$/Train_simple_regression.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -143,7 +147,23 @@
       <option name="project" value="LOCAL" />
       <updated>1714600863203</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="Minor option changes">
+      <option name="closed" value="true" />
+      <created>1714632529090</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1714632529090</updated>
+    </task>
+    <task id="LOCAL-00011" summary="Update .ipynb file with more documentation">
+      <option name="closed" value="true" />
+      <created>1714727032094</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1714727032094</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -162,6 +182,8 @@
     <MESSAGE value="Added Features: Cross Validation, IS-Sampling, Feature importance Visulization, outlier detection (disabled)" />
     <MESSAGE value="Minor change" />
     <MESSAGE value="Fix bugs of feature weights + Upload .ipynb" />
-    <option name="LAST_COMMIT_MESSAGE" value="Fix bugs of feature weights + Upload .ipynb" />
+    <MESSAGE value="Minor option changes" />
+    <MESSAGE value="Update .ipynb file with more documentation" />
+    <option name="LAST_COMMIT_MESSAGE" value="Update .ipynb file with more documentation" />
   </component>
 </project>
